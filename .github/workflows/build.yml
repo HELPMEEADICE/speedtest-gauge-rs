@@ -61,15 +61,13 @@ jobs:
             {"name":"linux-aarch64","os":"ubuntu-latest","target":"aarch64-unknown-linux-gnu","apt":"gcc-aarch64-linux-gnu","linker_env":"CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER","linker":"aarch64-linux-gnu-gcc"},
             {"name":"linux-riscv64","os":"ubuntu-latest","target":"riscv64gc-unknown-linux-gnu","apt":"gcc-riscv64-linux-gnu","linker_env":"CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER","linker":"riscv64-linux-gnu-gcc"}
           ]'
-          if [ -z "${ONLY:-}" ]; then
-            SELECTED="$ALL"
-          else
-            SELECTED=$(printf '%s' "$ALL" | jq -c --arg f "$ONLY" '[.[] | select(.name | contains($f))]')
-          fi
+          # jq -c 保证输出是**单行**：$GITHUB_OUTPUT 的 key=value 形式不接受多行值
+          SELECTED=$(printf '%s' "$ALL" | jq -c --arg f "${ONLY:-}" \
+            '[.[] | select($f == "" or (.name | contains($f)))]')
           COUNT=$(printf '%s' "$SELECTED" | jq 'length')
-          if [ "$COUNT" = "0" ]; then echo "only='$ONLY' 没有匹配任何目标"; exit 1; fi
+          if [ "$COUNT" = "0" ]; then echo "only='${ONLY:-}' 没有匹配任何目标"; exit 1; fi
           echo "选中 $COUNT 个目标：$(printf '%s' "$SELECTED" | jq -r '.[].name' | tr '\n' ' ')"
-          echo "matrix={\"include\":$SELECTED}" >> "$GITHUB_OUTPUT"
+          echo "matrix=$(printf '%s' "$SELECTED" | jq -c '{include: .}')" >> "$GITHUB_OUTPUT"
 
   demo:
     name: ${{ matrix.name }}
