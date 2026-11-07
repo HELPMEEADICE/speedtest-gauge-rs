@@ -36,13 +36,6 @@ env:
   CARGO_PROFILE_RELEASE_DEBUG: "false"
   CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
   CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "false"
-  # ↓↓↓ Linux 交叉编译的关键 ↓↓↓
-  # Slint 的字体栈在 Linux 上默认**链接** fontconfig，交叉编译就得为目标架构准备
-  # libfontconfig.so（aarch64/riscv64 都要额外装 multiarch 开发包）。
-  # `yeslogic-fontconfig-sys` 的 build.rs 见到这个变量就整个跳过 pkg-config，改成运行时
-  # dlopen（`build.rs:3-8`：`let dlopen = env::var_os("RUST_FONTCONFIG_DLOPEN").is_some()`）。
-  # 副作用是分发的二进制不再硬链接 libfontconfig——任何桌面发行版都自带 .so.1，反而更省事。
-  RUST_FONTCONFIG_DLOPEN: "1"
 
 jobs:
   # 目标清单动态生成：手动触发时可以用 only 输入只跑一部分（矩阵不支持逐项跳过，
@@ -60,13 +53,13 @@ jobs:
         run: |
           set -euo pipefail
           ALL='[
-            {"name":"windows-x86_64","os":"windows-latest","target":"x86_64-pc-windows-msvc","apt":"","linker_env":"","linker":""},
-            {"name":"windows-aarch64","os":"windows-latest","target":"aarch64-pc-windows-msvc","apt":"","linker_env":"","linker":""},
-            {"name":"macos-x86_64","os":"macos-latest","target":"x86_64-apple-darwin","apt":"","linker_env":"","linker":""},
-            {"name":"macos-aarch64","os":"macos-latest","target":"aarch64-apple-darwin","apt":"","linker_env":"","linker":""},
-            {"name":"linux-x86_64","os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu","apt":"","linker_env":"","linker":""},
-            {"name":"linux-aarch64","os":"ubuntu-latest","target":"aarch64-unknown-linux-gnu","apt":"gcc-aarch64-linux-gnu","linker_env":"CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER","linker":"aarch64-linux-gnu-gcc"},
-            {"name":"linux-riscv64","os":"ubuntu-latest","target":"riscv64gc-unknown-linux-gnu","apt":"gcc-riscv64-linux-gnu","linker_env":"CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER","linker":"riscv64-linux-gnu-gcc"}
+            {"name":"windows-x86_64","os":"windows-latest","target":"x86_64-pc-windows-msvc","apt":"","linker_env":"","linker":"","rustflags_env":"","debarch":"","debtriple":""},
+            {"name":"windows-aarch64","os":"windows-latest","target":"aarch64-pc-windows-msvc","apt":"","linker_env":"","linker":"","rustflags_env":"","debarch":"","debtriple":""},
+            {"name":"macos-x86_64","os":"macos-latest","target":"x86_64-apple-darwin","apt":"","linker_env":"","linker":"","rustflags_env":"","debarch":"","debtriple":""},
+            {"name":"macos-aarch64","os":"macos-latest","target":"aarch64-apple-darwin","apt":"","linker_env":"","linker":"","rustflags_env":"","debarch":"","debtriple":""},
+            {"name":"linux-x86_64","os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu","apt":"","linker_env":"","linker":"","rustflags_env":"","debarch":"","debtriple":""},
+            {"name":"linux-aarch64","os":"ubuntu-latest","target":"aarch64-unknown-linux-gnu","apt":"gcc-aarch64-linux-gnu","linker_env":"CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER","linker":"aarch64-linux-gnu-gcc","rustflags_env":"CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS","debarch":"arm64","debtriple":"aarch64-linux-gnu"},
+            {"name":"linux-riscv64","os":"ubuntu-latest","target":"riscv64gc-unknown-linux-gnu","apt":"gcc-riscv64-linux-gnu","linker_env":"CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER","linker":"riscv64-linux-gnu-gcc","rustflags_env":"CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_RUSTFLAGS","debarch":"riscv64","debtriple":"riscv64-linux-gnu"}
           ]'
           # jq -c 保证输出是**单行**：$GITHUB_OUTPUT 的 key=value 形式不接受多行值
           SELECTED=$(printf '%s' "$ALL" | jq -c --arg f "${ONLY:-}" \
@@ -97,12 +90,40 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: 交叉编译工具链
-        if: matrix.apt != ''
+      # Slint 的字体栈在 Linux 上会**链接**系统 fontconfig（yeslogic-fontconfig-sys）。
+      # 原生构建装 amd64 开发包即可；交叉构建还必须为目标架构准备 libfontconfig.so，
+      # 否则链接阶段找不到符号。这就是下面 multiarch 那步存在的唯一原因。
+      - name: Linux 构建依赖（fontconfig）
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends pkg-config ${{ matrix.apt }}
-          echo "${{ matrix.linker_env }}=${{ matrix.linker }}" >> "$GITHUB_ENV"
+          sudo apt-get install -y --no-install-recommends pkg-config libfontconfig1-dev
+
+      - name: 交叉工具链 + 目标架构 fontconfig（multiarch）
+        if: matrix.apt != ''
+        run: |
+          set -euo pipefail
+          sudo dpkg --add-architecture ${{ matrix.debarch }}
+          # Ubuntu 24.04 的源是 deb822 格式：先把官方源限定到 amd64，
+          # 再单独加一条 ports 源给目标架构（arm64 / riscv64 只在 ports 里）。
+          sudo sed -i 's/^Types: deb$/Types: deb\nArchitectures: amd64/' /etc/apt/sources.list.d/ubuntu.sources
+          sudo tee /etc/apt/sources.list.d/ports.sources >/dev/null <<EOF
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports
+          Suites: noble noble-updates
+          Components: main universe
+          Architectures: ${{ matrix.debarch }}
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ${{ matrix.apt }} libfontconfig1-dev:${{ matrix.debarch }}
+          {
+            echo "PKG_CONFIG_ALLOW_CROSS=1"
+            echo "PKG_CONFIG_PATH=/usr/lib/${{ matrix.debtriple }}/pkgconfig"
+            echo "${{ matrix.linker_env }}=${{ matrix.linker }}"
+            echo "${{ matrix.rustflags_env }}=-L/usr/lib/${{ matrix.debtriple }}"
+          } >> "$GITHUB_ENV"
 
       - name: Build demo（优化 release profile；变量已在 job 级注入）
         run: cargo build --release --target ${{ matrix.target }} --example demo

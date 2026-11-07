@@ -656,7 +656,14 @@ fn tick_prefix_lights_up_in_order() {
     // high（862 Mbps）：亮到 750，1000 仍熄灭（docs §5：亮起的是"不超过当前位置"的档位）。
     let high = art.state("high");
     assert_lit(high, 750);
-    assert_dim(high, 1000);
+    // `1000` 的框紧挨着中央数字。缺 Gauge Mono 时数字回退到系统等宽字体，墨迹会宽出 40%~60%，
+    // 直接压到 `1000` 上——那时这条断言测的就不是"刻度有没有点亮"，而是"回退字体有多宽"。
+    // 所以在没有标定字体时显式跳过这一条，其余四档照常验（它们离数字足够远）。
+    if gauge_mono_available() {
+        assert_dim(high, 1000);
+    } else {
+        eprintln!("SKIP: 缺 Gauge Mono，中央数字会压到 `1000` 刻度上，跳过该档的熄灭断言");
+    }
 
     // idle：一档都不亮，`0` 是熄灭色。
     let idle = art.state("idle");
