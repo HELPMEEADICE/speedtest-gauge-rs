@@ -1,0 +1,18 @@
+# Rust 构建产物（本机 target/ 已有 20+ GB，绝不入库）
+/target/
+
+# 专有字体：仅本地校准用，禁止入库/分发（见 .local-fonts/README.md 与 NOTICE.md §3.2）
+.local-fonts/*
+!.local-fonts/README.md
+
+# 字体工作目录的临时产物
+tools/fontwork/*.json
+
+# 本地调试产物
+comparison/_*.log
+comparison/_*.err
+comparison/_*.json.tmp
+
+# Python
+__pycache__/
+*.pyc

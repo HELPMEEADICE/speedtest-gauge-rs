@@ -1,0 +1,8 @@
+[minimal] step 0: kbps=120000 -> angle=4.504° number=120.00 lit=5 ring=123
+[minimal] step 1: kbps=260000 -> angle=35.099° number=260.00 lit=6 ring=150
+[minimal] step 2: kbps=400000 -> angle=54.000° number=400.00 lit=6 ring=167
+[minimal] step 3: kbps=540000 -> angle=72.901° number=540.00 lit=7 ring=184
+[minimal] step 4: kbps=680000 -> angle=91.799° number=680.00 lit=7 ring=201
+[minimal] step 5: kbps=820000 -> angle=110.700° number=820.00 lit=8 ring=218
+[minimal] 收敛次数 6/6，timer_running=false
+[minimal] 已写出 C:\oss\Project\Rust\speedtest-rs\slint\comparison/render/minimal-headless.png（572×572）

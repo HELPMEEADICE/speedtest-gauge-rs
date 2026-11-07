@@ -1,0 +1,613 @@
+{
+ "meta": {
+  "diff_heatmap_clamp": 64.0,
+  "ink_threshold": 60.0,
+  "note": "local-done.png 与 local-high.png 逐字节相同（docs/visual-targets.md §7）",
+  "reference_dir": "C:\\oss\\Project\\speedtest\\report",
+  "render_dir": "C:\\oss\\Project\\Rust\\speedtest-rs\\slint\\comparison\\render",
+  "scale": 4.0,
+  "uu": 286.0
+ },
+ "pairs": [
+  {
+   "full": {
+    "max_abs": 241,
+    "mean_abs": 0.444,
+    "pct_gt_32": 0.5,
+    "pct_gt_8": 0.939,
+    "pct_identical": 98.228
+   },
+   "geometry": {
+    "energy_inner_delta": 0.295,
+    "energy_inner_ref": 118.581,
+    "energy_inner_render": 118.876,
+    "energy_outer_delta": 0.104,
+    "energy_width_delta": -0.191,
+    "number_bbox_delta_px": 1.0,
+    "number_bbox_delta_uu": 0.25,
+    "ring_inner_delta": 0.5,
+    "ring_inner_ref": 118.3,
+    "ring_inner_render": 118.8,
+    "ring_outer_delta": 0.15,
+    "ring_outer_ref": 141.7,
+    "ring_outer_render": 141.85,
+    "sweep_delta": null,
+    "sweep_ref": null,
+    "sweep_render": null
+   },
+   "iou": {
+    "ink_ref": 32886,
+    "ink_render": 33713,
+    "intersection": 32057,
+    "iou": 0.9281,
+    "union": 34542
+   },
+   "key": "idle",
+   "ref_name": "local-idle.png",
+   "ren_name": "idle.png",
+   "state": "Idle",
+   "zones": {
+    "needle": {
+     "max_abs": 241,
+     "mean_abs": 0.261,
+     "pct_gt_8": 0.353,
+     "pct_identical": 98.721,
+     "pixels": 363176
+    },
+    "rest": {
+     "max_abs": 59,
+     "mean_abs": 0.209,
+     "pct_gt_8": 0.769,
+     "pct_identical": 98.821,
+     "pixels": 277502
+    },
+    "ring": {
+     "max_abs": 172,
+     "mean_abs": 0.868,
+     "pct_gt_8": 1.831,
+     "pct_identical": 97.492,
+     "pixels": 300628
+    },
+    "ring_literal": {
+     "max_abs": 172,
+     "mean_abs": 1.272,
+     "pct_gt_8": 2.472,
+     "pct_identical": 96.72,
+     "pixels": 273980
+    },
+    "text": {
+     "max_abs": 241,
+     "mean_abs": 1.048,
+     "pct_gt_8": 1.68,
+     "pct_identical": 97.549,
+     "pixels": 320320
+    },
+    "ticks": {
+     "max_abs": 188,
+     "mean_abs": 0.312,
+     "pct_gt_8": 0.786,
+     "pct_identical": 97.597,
+     "pixels": 234088
+    }
+   }
+  },
+  {
+   "full": {
+    "max_abs": 242,
+    "mean_abs": 0.464,
+    "pct_gt_32": 0.516,
+    "pct_gt_8": 0.944,
+    "pct_identical": 97.864
+   },
+   "geometry": {
+    "energy_inner_delta": 0.295,
+    "energy_inner_ref": 118.581,
+    "energy_inner_render": 118.876,
+    "energy_outer_delta": 0.104,
+    "energy_width_delta": -0.191,
+    "number_bbox_delta_px": 1.0,
+    "number_bbox_delta_uu": 0.25,
+    "ring_inner_delta": 0.5,
+    "ring_inner_ref": 118.3,
+    "ring_inner_render": 118.8,
+    "ring_outer_delta": 0.15,
+    "ring_outer_ref": 141.7,
+    "ring_outer_render": 141.85,
+    "sweep_delta": 0.0,
+    "sweep_ref": -80.9000000000011,
+    "sweep_render": -80.9000000000011
+   },
+   "iou": {
+    "ink_ref": 78563,
+    "ink_render": 79304,
+    "intersection": 77475,
+    "iou": 0.9637,
+    "union": 80392
+   },
+   "key": "low",
+   "ref_name": "local-low.png",
+   "ren_name": "low.png",
+   "state": "Download 8 Mbps",
+   "zones": {
+    "needle": {
+     "max_abs": 242,
+     "mean_abs": 0.285,
+     "pct_gt_8": 0.396,
+     "pct_identical": 98.686,
+     "pixels": 363176
+    },
+    "rest": {
+     "max_abs": 106,
+     "mean_abs": 0.226,
+     "pct_gt_8": 0.763,
+     "pct_identical": 98.816,
+     "pixels": 277502
+    },
+    "ring": {
+     "max_abs": 172,
+     "mean_abs": 0.837,
+     "pct_gt_8": 1.712,
+     "pct_identical": 95.981,
+     "pixels": 300628
+    },
+    "ring_literal": {
+     "max_abs": 172,
+     "mean_abs": 1.19,
+     "pct_gt_8": 2.264,
+     "pct_identical": 95.978,
+     "pixels": 273980
+    },
+    "text": {
+     "max_abs": 242,
+     "mean_abs": 1.128,
+     "pct_gt_8": 1.763,
+     "pct_identical": 96.994,
+     "pixels": 320320
+    },
+    "ticks": {
+     "max_abs": 188,
+     "mean_abs": 0.396,
+     "pct_gt_8": 0.887,
+     "pct_identical": 97.569,
+     "pixels": 234088
+    }
+   }
+  },
+  {
+   "full": {
+    "max_abs": 255,
+    "mean_abs": 0.506,
+    "pct_gt_32": 0.593,
+    "pct_gt_8": 0.991,
+    "pct_identical": 97.317
+   },
+   "geometry": {
+    "energy_inner_delta": 0.143,
+    "energy_inner_ref": 118.57,
+    "energy_inner_render": 118.713,
+    "energy_outer_delta": 0.082,
+    "energy_width_delta": -0.061,
+    "number_bbox_delta_px": 0.0,
+    "number_bbox_delta_uu": 0.0,
+    "ring_inner_delta": 0.25,
+    "ring_inner_ref": 118.3,
+    "ring_inner_render": 118.55,
+    "ring_outer_delta": 0.15,
+    "ring_outer_ref": 141.7,
+    "ring_outer_render": 141.85,
+    "sweep_delta": 0.0,
+    "sweep_ref": 12.449999999996484,
+    "sweep_render": 12.449999999996484
+   },
+   "iou": {
+    "ink_ref": 158628,
+    "ink_render": 159334,
+    "intersection": 157274,
+    "iou": 0.9788,
+    "union": 160688
+   },
+   "key": "mid",
+   "ref_name": "local-mid.png",
+   "ren_name": "mid.png",
+   "state": "Download 155.61 Mbps",
+   "zones": {
+    "needle": {
+     "max_abs": 255,
+     "mean_abs": 0.24,
+     "pct_gt_8": 0.369,
+     "pct_identical": 98.709,
+     "pixels": 363176
+    },
+    "rest": {
+     "max_abs": 115,
+     "mean_abs": 0.281,
+     "pct_gt_8": 0.797,
+     "pct_identical": 98.791,
+     "pixels": 277502
+    },
+    "ring": {
+     "max_abs": 172,
+     "mean_abs": 0.758,
+     "pct_gt_8": 1.443,
+     "pct_identical": 93.638,
+     "pixels": 300628
+    },
+    "ring_literal": {
+     "max_abs": 172,
+     "mean_abs": 1.023,
+     "pct_gt_8": 1.871,
+     "pct_identical": 94.995,
+     "pixels": 273980
+    },
+    "text": {
+     "max_abs": 255,
+     "mean_abs": 1.132,
+     "pct_gt_8": 1.86,
+     "pct_identical": 97.073,
+     "pixels": 320320
+    },
+    "ticks": {
+     "max_abs": 190,
+     "mean_abs": 0.735,
+     "pct_gt_8": 1.499,
+     "pct_identical": 97.415,
+     "pixels": 234088
+    }
+   }
+  },
+  {
+   "full": {
+    "max_abs": 255,
+    "mean_abs": 0.611,
+    "pct_gt_32": 0.699,
+    "pct_gt_8": 1.083,
+    "pct_identical": 96.676
+   },
+   "geometry": {
+    "energy_inner_delta": -0.004,
+    "energy_inner_ref": 118.563,
+    "energy_inner_render": 118.559,
+    "energy_outer_delta": 0.06,
+    "energy_width_delta": 0.064,
+    "number_bbox_delta_px": 1.0,
+    "number_bbox_delta_uu": 0.25,
+    "ring_inner_delta": 0.0,
+    "ring_inner_ref": 118.3,
+    "ring_inner_render": 118.3,
+    "ring_outer_delta": 0.15,
+    "ring_outer_ref": 141.7,
+    "ring_outer_render": 141.85,
+    "sweep_delta": 0.0,
+    "sweep_ref": 116.39999999999196,
+    "sweep_render": 116.39999999999196
+   },
+   "iou": {
+    "ink_ref": 248036,
+    "ink_render": 248108,
+    "intersection": 245788,
+    "iou": 0.9818,
+    "union": 250356
+   },
+   "key": "high",
+   "ref_name": "local-high.png",
+   "ren_name": "high.png",
+   "state": "Download 862 Mbps",
+   "zones": {
+    "needle": {
+     "max_abs": 255,
+     "mean_abs": 0.39,
+     "pct_gt_8": 0.542,
+     "pct_identical": 98.472,
+     "pixels": 363176
+    },
+    "rest": {
+     "max_abs": 137,
+     "mean_abs": 0.343,
+     "pct_gt_8": 0.823,
+     "pct_identical": 98.759,
+     "pixels": 277502
+    },
+    "ring": {
+     "max_abs": 172,
+     "mean_abs": 0.661,
+     "pct_gt_8": 1.102,
+     "pct_identical": 91.331,
+     "pixels": 300628
+    },
+    "ring_literal": {
+     "max_abs": 172,
+     "mean_abs": 0.842,
+     "pct_gt_8": 1.426,
+     "pct_identical": 93.911,
+     "pixels": 273980
+    },
+    "text": {
+     "max_abs": 255,
+     "mean_abs": 1.345,
+     "pct_gt_8": 2.117,
+     "pct_identical": 96.742,
+     "pixels": 320320
+    },
+    "ticks": {
+     "max_abs": 193,
+     "mean_abs": 1.141,
+     "pct_gt_8": 2.154,
+     "pct_identical": 97.198,
+     "pixels": 234088
+    }
+   }
+  },
+  {
+   "full": {
+    "max_abs": 255,
+    "mean_abs": 0.575,
+    "pct_gt_32": 0.655,
+    "pct_gt_8": 1.066,
+    "pct_identical": 97.035
+   },
+   "geometry": {
+    "energy_inner_delta": 0.144,
+    "energy_inner_ref": 118.569,
+    "energy_inner_render": 118.713,
+    "energy_outer_delta": 0.09,
+    "energy_width_delta": -0.054,
+    "number_bbox_delta_px": 1.0,
+    "number_bbox_delta_uu": 0.25,
+    "ring_inner_delta": 0.25,
+    "ring_inner_ref": 118.3,
+    "ring_inner_render": 118.55,
+    "ring_outer_delta": 0.15,
+    "ring_outer_ref": 141.7,
+    "ring_outer_render": 141.85,
+    "sweep_delta": 0.05,
+    "sweep_ref": 45.89999999999597,
+    "sweep_render": 45.94999999999597
+   },
+   "iou": {
+    "ink_ref": 187046,
+    "ink_render": 187693,
+    "intersection": 185386,
+    "iou": 0.979,
+    "union": 189353
+   },
+   "key": "upload",
+   "ref_name": "local-upload.png",
+   "ren_name": "upload.png",
+   "state": "Upload 341 Mbps",
+   "zones": {
+    "needle": {
+     "max_abs": 255,
+     "mean_abs": 0.342,
+     "pct_gt_8": 0.541,
+     "pct_identical": 98.527,
+     "pixels": 363176
+    },
+    "rest": {
+     "max_abs": 148,
+     "mean_abs": 0.314,
+     "pct_gt_8": 0.811,
+     "pct_identical": 98.787,
+     "pixels": 277502
+    },
+    "ring": {
+     "max_abs": 202,
+     "mean_abs": 0.821,
+     "pct_gt_8": 1.411,
+     "pct_identical": 92.692,
+     "pixels": 300628
+    },
+    "ring_literal": {
+     "max_abs": 206,
+     "mean_abs": 0.978,
+     "pct_gt_8": 1.712,
+     "pct_identical": 94.568,
+     "pixels": 273980
+    },
+    "text": {
+     "max_abs": 255,
+     "mean_abs": 1.241,
+     "pct_gt_8": 1.955,
+     "pct_identical": 96.956,
+     "pixels": 320320
+    },
+    "ticks": {
+     "max_abs": 188,
+     "mean_abs": 0.871,
+     "pct_gt_8": 1.72,
+     "pct_identical": 97.303,
+     "pixels": 234088
+    }
+   }
+  },
+  {
+   "full": {
+    "max_abs": 255,
+    "mean_abs": 0.611,
+    "pct_gt_32": 0.699,
+    "pct_gt_8": 1.083,
+    "pct_identical": 96.676
+   },
+   "geometry": {
+    "energy_inner_delta": -0.004,
+    "energy_inner_ref": 118.563,
+    "energy_inner_render": 118.559,
+    "energy_outer_delta": 0.06,
+    "energy_width_delta": 0.064,
+    "number_bbox_delta_px": 1.0,
+    "number_bbox_delta_uu": 0.25,
+    "ring_inner_delta": 0.0,
+    "ring_inner_ref": 118.3,
+    "ring_inner_render": 118.3,
+    "ring_outer_delta": 0.15,
+    "ring_outer_ref": 141.7,
+    "ring_outer_render": 141.85,
+    "sweep_delta": 0.0,
+    "sweep_ref": 116.39999999999196,
+    "sweep_render": 116.39999999999196
+   },
+   "iou": {
+    "ink_ref": 248036,
+    "ink_render": 248108,
+    "intersection": 245788,
+    "iou": 0.9818,
+    "union": 250356
+   },
+   "key": "done",
+   "ref_name": "local-done.png",
+   "ren_name": "done.png",
+   "state": "Done",
+   "zones": {
+    "needle": {
+     "max_abs": 255,
+     "mean_abs": 0.39,
+     "pct_gt_8": 0.542,
+     "pct_identical": 98.472,
+     "pixels": 363176
+    },
+    "rest": {
+     "max_abs": 137,
+     "mean_abs": 0.343,
+     "pct_gt_8": 0.823,
+     "pct_identical": 98.759,
+     "pixels": 277502
+    },
+    "ring": {
+     "max_abs": 172,
+     "mean_abs": 0.661,
+     "pct_gt_8": 1.102,
+     "pct_identical": 91.331,
+     "pixels": 300628
+    },
+    "ring_literal": {
+     "max_abs": 172,
+     "mean_abs": 0.842,
+     "pct_gt_8": 1.426,
+     "pct_identical": 93.911,
+     "pixels": 273980
+    },
+    "text": {
+     "max_abs": 255,
+     "mean_abs": 1.345,
+     "pct_gt_8": 2.117,
+     "pct_identical": 96.742,
+     "pixels": 320320
+    },
+    "ticks": {
+     "max_abs": 193,
+     "mean_abs": 1.141,
+     "pct_gt_8": 2.154,
+     "pct_identical": 97.198,
+     "pixels": 234088
+    }
+   }
+  },
+  {
+   "full": {
+    "max_abs": 255,
+    "mean_abs": 0.668,
+    "pct_gt_32": 0.767,
+    "pct_gt_8": 1.215,
+    "pct_identical": 96.534
+   },
+   "geometry": {
+    "energy_inner_delta": -0.004,
+    "energy_inner_ref": 118.563,
+    "energy_inner_render": 118.559,
+    "energy_outer_delta": 0.05,
+    "energy_width_delta": 0.054,
+    "number_bbox_delta_px": 1.0,
+    "number_bbox_delta_uu": 0.25,
+    "ring_inner_delta": 0.0,
+    "ring_inner_ref": 118.3,
+    "ring_inner_render": 118.3,
+    "ring_outer_delta": 0.15,
+    "ring_outer_ref": 141.7,
+    "ring_outer_render": 141.85,
+    "sweep_delta": 0.0,
+    "sweep_ref": 95.34999999999316,
+    "sweep_render": 95.34999999999316
+   },
+   "iou": {
+    "ink_ref": 238801,
+    "ink_render": 238480,
+    "intersection": 236257,
+    "iou": 0.9802,
+    "union": 241024
+   },
+   "key": "extended",
+   "ref_name": "local-extended.png",
+   "ren_name": "extended.png",
+   "state": "Extended 4200 Mbps (auto)",
+   "zones": {
+    "needle": {
+     "max_abs": 255,
+     "mean_abs": 0.416,
+     "pct_gt_8": 0.582,
+     "pct_identical": 98.427,
+     "pixels": 363176
+    },
+    "rest": {
+     "max_abs": 130,
+     "mean_abs": 0.358,
+     "pct_gt_8": 0.905,
+     "pct_identical": 98.642,
+     "pixels": 277502
+    },
+    "ring": {
+     "max_abs": 172,
+     "mean_abs": 0.655,
+     "pct_gt_8": 1.136,
+     "pct_identical": 91.673,
+     "pixels": 300628
+    },
+    "ring_literal": {
+     "max_abs": 172,
+     "mean_abs": 0.94,
+     "pct_gt_8": 1.652,
+     "pct_identical": 93.725,
+     "pixels": 273980
+    },
+    "text": {
+     "max_abs": 255,
+     "mean_abs": 1.423,
+     "pct_gt_8": 2.215,
+     "pct_identical": 96.374,
+     "pixels": 320320
+    },
+    "ticks": {
+     "max_abs": 188,
+     "mean_abs": 1.406,
+     "pct_gt_8": 2.674,
+     "pct_identical": 96.318,
+     "pixels": 234088
+    }
+   }
+  }
+ ],
+ "zones": [
+  {
+   "desc": "环带本体 118.5…141.5 uu（= 130±11.5）",
+   "key": "ring"
+  },
+  {
+   "desc": "环带字面 107.0…130.0 uu（= 118.5±11.5）",
+   "key": "ring_literal"
+  },
+  {
+   "desc": "指针区 r < 85 uu",
+   "key": "needle"
+  },
+  {
+   "desc": "刻度环 97±12 uu（85…109）",
+   "key": "ticks"
+  },
+  {
+   "desc": "文字块 y ∈ [205, 275] uu",
+   "key": "text"
+  },
+  {
+   "desc": "其余（上面四区并集的补集）",
+   "key": "rest"
+  }
+ ]
+}

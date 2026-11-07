@@ -1,0 +1,39 @@
+[package]
+name = "speed-gauge-slint"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "可复用的原生 Slint 动态测速仪表盘组件（speedtest-gauge-svg 的 Rust + Slint 移植）"
+license = "WTFPL"
+
+[lib]
+name = "speed_gauge_slint"
+path = "src/lib.rs"
+
+[features]
+# 下游如果只想嵌入组件、既不需要桌面窗口也不需要内置字体：
+#   speed-gauge-slint = { version = "...", default-features = false, features = ["desktop"] }
+default = ["desktop", "bundled-fonts", "screenshots", "needle-raster"]
+# winit 窗口后端 + femtovg（OpenGL）渲染器：demo 与普通桌面宿主需要
+desktop = ["slint/backend-winit", "slint/renderer-femtovg"]
+# 运行时注册随包的 Montserrat（OFL）与本地 Gauge Mono（专有，仅本机存在时生效）
+bundled-fonts = ["slint/unstable-fontique-011"]
+# 无窗口软件渲染截图（视觉回归用）。
+screenshots = ["dep:tiny-skia"]
+# 指针整体光栅化（tiny-skia 画一张 RGBA，Slint 用 `Image` 一次合成 ⇒ 无接缝）。
+# 关掉后组件退回 32 片梯形平色路径，两条路都能编译、都能测。
+needle-raster = ["dep:tiny-skia"]
+
+[dependencies]
+# default-features 关掉：避免在不需要窗口的生产宿主里硬拉 winit/femtovg。
+# renderer-software 常驻，因为视觉回归靠它做无窗口渲染。
+slint = { version = "=1.18.1", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "renderer-software",
+    "software-renderer-path",
+] }
+tiny-skia = { version = "0.11.4", optional = true }
+
+[build-dependencies]
+slint-build = "=1.18.1"

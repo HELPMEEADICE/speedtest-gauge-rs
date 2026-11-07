@@ -1,0 +1,682 @@
+// 可运行交互 Demo 的窗口结构（examples/demo.rs 的视图层）。
+//
+// 设计约束（见 docs/demo.md）：
+//  1. 仪表本身是**外部库**：本文件只用 `SpeedGauge` 的公开能力，不碰任何内部实现；
+//     两个仪表实例由 Rust 侧用 `SpeedGauge::new()` 创建，再经 `slint::ComponentFactory`
+//     注入下面两个 `ComponentContainer`——这样宿主既能拿到实例去
+//     `GaugeHandle::attach`，实例又能参与本文件的布局。
+//     （Slint 的属性类型里没有"组件实例"类型，`ComponentContainer` 是唯一官方接法；
+//      它是 experimental 元素，build.rs 里就地置位 `SLINT_ENABLE_EXPERIMENTAL_FEATURES`。）
+//  2. 本文件**不做**任何数值/角度/颜色映射：派生量由 `GaugeHandle` 推给仪表，控制面板的
+//     读数由 Rust 每 100 ms 格式化后写进 `stat-*` 属性。
+//  3. 控件状态一律用**中性类型**（int/bool/string），不引用组件导出的枚举：同一个 .slint
+//     被 slint-build 独立编译两次会产生**两个不同的 Rust 枚举类型**（`demo.rs` 里的
+//     `GaugeStage` ≠ `speed_gauge_slint::GaugeStage`），中性类型让面板与组件彻底解耦，
+//     枚举映射只发生在 examples/demo.rs 一处。
+//  4. 控件只做三件事：改自己的状态属性 → 触发回调；Rust 读属性 → 调 handle API。
+
+// ---------------------------------------------------------------------------
+// 小控件（不依赖 std-widgets：本 crate 没开该 feature，也不该为 demo 加依赖）
+// ---------------------------------------------------------------------------
+
+// 单选 / 开关"胶囊"：勾选态 = 强调色底 + 深色字。
+//
+// 宽度由**调用方显式给**（见各行的 `width:`）：胶囊里的 Text 是 `width: 100%`，容器一旦被
+// 压窄，文字会静默裁掉（之前 `Multi` 显示成 `Mult` 就是这条）。没写 `width` 的行按
+// `horizontal-stretch` 均分整行。
+//
+// 宽度按**实测 advance** 定，不做估算（Montserrat Bold @ 11px，Pillow `getlength`，
+// 与 Slint/skrifa 的偏差 < 0.3px）：`Idle` 25.0 / `Ping` 29.0 / `Download` 63.0 /
+// `Upload` 45.0 / `Done` 33.0。每格再留 ≥ 9px 内边距余量。
+component Chip inherits Rectangle {
+    in property <string> label: "";
+    in property <bool> active: false;
+    in property <color> accent: #00c9c0;
+    in property <color> idle-bg: #1c212b;
+    in property <color> on-text: #0b0f14;
+    in property <color> off-text: #8b93a2;
+    callback clicked();
+
+    height: 26px;
+    horizontal-stretch: 1;
+    border-radius: 5px;
+    background: active ? accent : idle-bg;
+
+    Text {
+        width: 100%;
+        height: 100%;
+        text: root.label;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 11px;
+        font-weight: 700;
+        color: root.active ? root.on-text : root.off-text;
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// 动作按钮。
+component Btn inherits Rectangle {
+    in property <string> label: "";
+    in property <color> bg: #00c9c0;
+    in property <color> fg: #0b0f14;
+    callback clicked();
+
+    height: 30px;
+    horizontal-stretch: 1;
+    border-radius: 6px;
+    background: root.bg;
+
+    Text {
+        width: 100%;
+        height: 100%;
+        text: root.label;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 12px;
+        font-weight: 700;
+        color: root.fg;
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// 一行"标签 + 若干胶囊"。
+component LabeledChips inherits HorizontalLayout {
+    in property <string> label: "";
+    // 标签列宽：默认 76px；Stage 那一行收窄到 40px 给胶囊留横向空间（两行 3+2）。
+    in property <length> label-width: 76px;
+    in property <color> muted: #8b93a2;
+
+    height: 26px;
+    spacing: 6px;
+    alignment: start;
+
+    Text {
+        width: root.label-width;
+        height: 100%;
+        text: root.label;
+        vertical-alignment: center;
+        font-size: 11px;
+        color: root.muted;
+    }
+
+    @children
+}
+
+// 只读状态一格。
+component Stat inherits Text {
+    in property <color> fg: #e6e9ef;
+
+    height: 16px;
+    vertical-alignment: center;
+    font-size: 11px;
+    color: root.fg;
+}
+
+// ---------------------------------------------------------------------------
+// Demo 窗口
+// ---------------------------------------------------------------------------
+
+export component DemoWindow inherits Window {
+    title: "Speed Gauge — Slint port demo";
+    // 1280×800 是 headless 截图口径（examples/demo.rs 会显式 set_size）。
+    preferred-width: 1280px;
+    preferred-height: 800px;
+    background: root.theme-idx == 0 ? #0b0f14 : #eef1f5;
+
+    // ---- 宿主注入的两个仪表（ComponentFactory → ComponentContainer）--------
+    in-out property <component-factory> main-gauge-factory;
+    in-out property <component-factory> mini-gauge-factory;
+
+    // ---- 控件状态（中性类型；Rust 负责 ↔ 库枚举）---------------------------
+    // stage-idx: 0 idle / 1 ping / 2 download / 3 upload / 4 done
+    in-out property <int> stage-idx: 0;
+    // connection-idx: 0 multi / 1 single
+    in-out property <int> connection-idx: 0;
+    // scale-idx: 0 fixed / 1 auto
+    in-out property <int> scale-idx: 0;
+    // theme-idx: 0 dark / 1 light
+    in-out property <int> theme-idx: 0;
+    // motion-idx: 0 spring / 1 tween
+    in-out property <int> motion-idx: 0;
+    in-out property <float> speed-mbps: 0;
+    in-out property <string> speed-label: "0 Mbps";
+    in-out property <string> snap-text: "862";
+    in-out property <bool> wobble: true;
+    in-out property <bool> animation-on: true;
+    in-out property <bool> paused: false;
+    in-out property <bool> demo-running: false;
+
+    // ---- 只读状态区（Rust 每 100 ms 格式化后写入）--------------------------
+    in-out property <string> stat-angle-text: "0.00°";
+    in-out property <string> stat-number-text: "0.00";
+    in-out property <string> stat-lit-text: "0";
+    in-out property <string> stat-ring-text: "0";
+    in-out property <string> stat-timer-text: "timer_running = false";
+    in-out property <string> stat-run-text: "状态：manual";
+
+    // ---- 回调（全部由 Rust 接线到 handle / DemoSource）--------------------
+    callback run-clicked();
+    callback reset-clicked();
+    callback snap-clicked();
+    callback speed-picked();
+    callback stage-picked();
+    callback connection-picked();
+    callback scale-picked();
+    callback theme-picked();
+    callback motion-picked();
+    callback wobble-picked();
+    callback animation-picked();
+    callback pause-clicked();
+
+    // ---- 主题 token（面板配色随 theme-idx 联动）----------------------------
+    property <bool> is-dark: root.theme-idx == 0;
+    property <color> panel-bg: root.is-dark ? #12161d : #ffffff;
+    property <color> fg: root.is-dark ? #e6e9ef : #14171c;
+    property <color> muted: root.is-dark ? #8b93a2 : #5b616b;
+    property <color> chip-bg: root.is-dark ? #1c212b : #e8ebf0;
+    property <color> accent: #00c9c0;
+    property <color> chip-on-text: #0b0f14;
+
+    // 主仪表边长：默认窗口高 800 ⇒ 800 × 0.715 = 572 逻辑 px，限制在 440…640（恒正方形）。
+    // 只用绝对定位的子元素，不参与父布局的 layoutinfo，因此不构成绑定环。
+    property <float> main-side: min(max((root.height / 1px) * 0.715, 440), 640);
+
+    HorizontalLayout {
+        padding: 24px;
+        spacing: 24px;
+
+        // ================= 左侧：主仪表（正方形，居中） =================
+        Rectangle {
+            horizontal-stretch: 1;
+            vertical-stretch: 1;
+            background: transparent;
+
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: root.main-side * 1px;
+                height: root.main-side * 1px;
+                background: transparent;
+
+                ComponentContainer {
+                    width: 100%;
+                    height: 100%;
+                    component-factory: root.main-gauge-factory;
+                }
+            }
+        }
+
+        // ================= 右侧：控制面板（320 宽） =================
+        Rectangle {
+            width: 320px;
+            background: root.panel-bg;
+            border-radius: 10px;
+
+            VerticalLayout {
+                // 16px padding；行距 5px。整列固定高的行合计 583px，21 行 ⇒ 20 个间隙
+                // = 100px，总 709px ≤ 可用 720px（800 − 2×24 外 padding − 2×16 内 padding）。
+                // 行距从 6 收到 5 就是为了给 Stage 的第二行（+26px）腾出空间，不挤压小仪表。
+                padding: 16px;
+                spacing: 5px;
+
+                Text {
+                    height: 20px;
+                    text: "Speed Gauge · Slint 移植 Demo";
+                    font-size: 15px;
+                    font-weight: 700;
+                    color: root.fg;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    height: 14px;
+                    text: "左：主仪表（完整控制器）　底部：独立第二实例";
+                    font-size: 10px;
+                    color: root.muted;
+                    vertical-alignment: center;
+                }
+
+                // Run Demo / Reset
+                HorizontalLayout {
+                    height: 30px;
+                    spacing: 8px;
+                    Btn {
+                        label: root.demo-running ? "Stop Demo" : "Run Demo";
+                        clicked => {
+                            root.run-clicked();
+                        }
+                    }
+                    Btn {
+                        label: "Reset";
+                        bg: root.chip-bg;
+                        fg: root.fg;
+                        clicked => {
+                            root.reset-clicked();
+                        }
+                    }
+                }
+
+                // Snap To（输入框 + 按钮，单位 Mbps）
+                HorizontalLayout {
+                    height: 30px;
+                    spacing: 8px;
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        height: 30px;
+                        background: root.chip-bg;
+                        border-radius: 6px;
+                        TextInput {
+                            x: 8px;
+                            width: parent.width - 16px;
+                            height: 100%;
+                            text <=> root.snap-text;
+                            color: root.fg;
+                            font-size: 12px;
+                            single-line: true;
+                            vertical-alignment: center;
+                        }
+                    }
+                    Btn {
+                        width: 84px;
+                        label: "Snap To";
+                        clicked => {
+                            root.snap-clicked();
+                        }
+                    }
+                }
+
+                // Speed 滑块（0–10000 Mbps，实时）
+                Text {
+                    height: 14px;
+                    text: "Speed（0–10000 Mbps，实时）";
+                    font-size: 10px;
+                    color: root.muted;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    height: 24px;
+                    background: transparent;
+
+                    Rectangle {
+                        // `x` 必须显式写 0：Slint 的默认几何会把"有显式宽度、没写 x"的
+                        // 元素**水平居中**（default_geometry pass），滑块填充条会被推歪。
+                        x: 0px;
+                        y: (parent.height - self.height) / 2;
+                        width: parent.width;
+                        height: 6px;
+                        border-radius: 3px;
+                        background: root.chip-bg;
+                    }
+                    Rectangle {
+                        x: 0px;
+                        y: (parent.height - self.height) / 2;
+                        width: (parent.width - 16px) * root.speed-mbps / 10000;
+                        height: 6px;
+                        border-radius: 3px;
+                        background: root.accent;
+                    }
+                    Rectangle {
+                        x: (parent.width - 16px) * root.speed-mbps / 10000;
+                        y: (parent.height - self.height) / 2;
+                        width: 16px;
+                        height: 16px;
+                        border-radius: 8px;
+                        background: root.fg;
+                    }
+                    TouchArea {
+                        moved => {
+                            root.speed-mbps = min(max((self.mouse-x / 1px) / (self.width / 1px) * 10000, 0), 10000);
+                            root.speed-picked();
+                        }
+                        clicked => {
+                            root.speed-mbps = min(max((self.mouse-x / 1px) / (self.width / 1px) * 10000, 0), 10000);
+                            root.speed-picked();
+                        }
+                    }
+                }
+                Text {
+                    height: 16px;
+                    text: root.speed-label;
+                    font-size: 12px;
+                    font-weight: 700;
+                    color: root.accent;
+                    vertical-alignment: center;
+                }
+
+                // Stage：**完整单词，不缩写**，拆成两行 3+2。
+                //
+                // 单行 5 格放不下的算术：面板 320 − 2×16(padding) = 288px 可用宽，
+                // 而 5 格需要 `40(标签) + 5×6(gap) + 宽`；仅 `Idle/Ping/Download/Upload/Done`
+                // 的文字 advance 就是 25+29+63+45+33 = 195，加上每格 ≥9px 内边距 = 240，
+                // 合计 40+30+240 = 310 > 288（差 22px）⇒ 要么缩写要么换行。选换行。
+                // 两行都保留 40px 的标签列（第二行是空标签占位），所以两行的胶囊左边缘对齐。
+                LabeledChips {
+                    label: "Stage";
+                    label-width: 40px;
+                    muted: root.muted;
+                    Chip {
+                        label: "Idle";
+                        width: 46px;
+                        active: root.stage-idx == 0;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.stage-idx = 0;
+                            root.stage-picked();
+                        }
+                    }
+                    Chip {
+                        label: "Ping";
+                        width: 50px;
+                        active: root.stage-idx == 1;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.stage-idx = 1;
+                            root.stage-picked();
+                        }
+                    }
+                    Chip {
+                        label: "Download";
+                        width: 84px;
+                        active: root.stage-idx == 2;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.stage-idx = 2;
+                            root.stage-picked();
+                        }
+                    }
+                }
+                LabeledChips {
+                    // 空标签 + 同宽占位：第二行胶囊与第一行左边缘对齐（40 + 6(gap) = 46）。
+                    label: "";
+                    label-width: 40px;
+                    muted: root.muted;
+                    Chip {
+                        label: "Upload";
+                        width: 66px;
+                        active: root.stage-idx == 3;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.stage-idx = 3;
+                            root.stage-picked();
+                        }
+                    }
+                    Chip {
+                        label: "Done";
+                        width: 50px;
+                        active: root.stage-idx == 4;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.stage-idx = 4;
+                            root.stage-picked();
+                        }
+                    }
+                }
+
+                // Connection
+                LabeledChips {
+                    label: "Connection";
+                    muted: root.muted;
+                    Chip {
+                        label: "Multi";
+                        width: 72px;
+                        active: root.connection-idx == 0;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.connection-idx = 0;
+                            root.connection-picked();
+                        }
+                    }
+                    Chip {
+                        label: "Single";
+                        width: 72px;
+                        active: root.connection-idx == 1;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.connection-idx = 1;
+                            root.connection-picked();
+                        }
+                    }
+                }
+
+                // Scale
+                LabeledChips {
+                    label: "Scale";
+                    muted: root.muted;
+                    Chip {
+                        label: "Fixed";
+                        width: 72px;
+                        active: root.scale-idx == 0;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.scale-idx = 0;
+                            root.scale-picked();
+                        }
+                    }
+                    Chip {
+                        label: "Auto";
+                        width: 72px;
+                        active: root.scale-idx == 1;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.scale-idx = 1;
+                            root.scale-picked();
+                        }
+                    }
+                }
+
+                // Theme（同时联动面板底色）
+                LabeledChips {
+                    label: "Theme";
+                    muted: root.muted;
+                    Chip {
+                        label: "Dark";
+                        width: 72px;
+                        active: root.theme-idx == 0;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.theme-idx = 0;
+                            root.theme-picked();
+                        }
+                    }
+                    Chip {
+                        label: "Light";
+                        width: 72px;
+                        active: root.theme-idx == 1;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.theme-idx = 1;
+                            root.theme-picked();
+                        }
+                    }
+                }
+
+                // Motion
+                LabeledChips {
+                    label: "Motion";
+                    muted: root.muted;
+                    Chip {
+                        label: "Spring";
+                        width: 72px;
+                        active: root.motion-idx == 0;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.motion-idx = 0;
+                            root.motion-picked();
+                        }
+                    }
+                    Chip {
+                        label: "Tween";
+                        width: 72px;
+                        active: root.motion-idx == 1;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.motion-idx = 1;
+                            root.motion-picked();
+                        }
+                    }
+                }
+
+                // Wobble / Animation / Pause
+                HorizontalLayout {
+                    height: 26px;
+                    spacing: 6px;
+                    Chip {
+                        label: root.wobble ? "Wobble on" : "Wobble off";
+                        active: root.wobble;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.wobble = !root.wobble;
+                            root.wobble-picked();
+                        }
+                    }
+                    Chip {
+                        label: root.animation-on ? "Anim on" : "Anim off";
+                        active: root.animation-on;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.animation-on = !root.animation-on;
+                            root.animation-picked();
+                        }
+                    }
+                    Chip {
+                        label: root.paused ? "Resume" : "Pause";
+                        active: root.paused;
+                        accent: root.accent;
+                        idle-bg: root.chip-bg;
+                        on-text: root.chip-on-text;
+                        off-text: root.muted;
+                        clicked => {
+                            root.pause-clicked();
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: root.chip-bg;
+                }
+
+                // 只读状态区
+                HorizontalLayout {
+                    height: 16px;
+                    spacing: 6px;
+                    Stat {
+                        horizontal-stretch: 1;
+                        fg: root.muted;
+                        text: "angle " + root.stat-angle-text;
+                    }
+                    Stat {
+                        horizontal-stretch: 1;
+                        fg: root.fg;
+                        text: "number " + root.stat-number-text;
+                    }
+                }
+                HorizontalLayout {
+                    height: 16px;
+                    spacing: 6px;
+                    Stat {
+                        horizontal-stretch: 1;
+                        fg: root.muted;
+                        text: "lit " + root.stat-lit-text;
+                    }
+                    Stat {
+                        horizontal-stretch: 1;
+                        fg: root.muted;
+                        text: "ring " + root.stat-ring-text;
+                    }
+                }
+                Stat {
+                    fg: root.muted;
+                    text: root.stat-timer-text;
+                }
+                Stat {
+                    fg: root.muted;
+                    text: root.stat-run-text;
+                }
+
+                // 第二仪表：独立状态（≈0.35 × 572 = 200 px），用来直接证明多实例互不影响。
+                Rectangle {
+                    height: 200px;
+                    background: transparent;
+                    Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        width: 200px;
+                        height: 200px;
+                        background: transparent;
+                        ComponentContainer {
+                            width: 100%;
+                            height: 100%;
+                            component-factory: root.mini-gauge-factory;
+                        }
+                    }
+                }
+                Text {
+                    height: 14px;
+                    horizontal-alignment: center;
+                    text: "独立实例：Single + Auto + 4200 Mbps（不受主仪表影响）";
+                    font-size: 10px;
+                    color: root.muted;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

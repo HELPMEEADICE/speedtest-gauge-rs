@@ -1,0 +1,328 @@
+// Copyright (c) 2026. 可复用组件：286 uu 坐标系的原生 Slint 动态测速仪表盘。
+//
+// 数值（uu → path 字符串 / 段表 / 指针烘焙 / 布局量）全部在 src/renderer.rs；
+// 本文件只负责"把已经算好的东西摆到 286 uu 画布上"。
+//
+// 三条来自 PROBE.md 的硬约束：
+//  1. 所有 `Path` 都显式写 `viewbox-*`，元素尺寸 = 该 viewbox × k，否则 `fit: contain`
+//     会把绝对坐标拉伸（PROBE §5.2）。
+//  2. 描边宽度**不随** viewBox 缩放（PROBE X1b），所以凡是描边长度都写成 `Npx * root.k`。
+//  3. 软件渲染器静默忽略 `transform-rotation`/`transform-scale`（PROBE C4），指针几何
+//     由 Rust 按角度烘焙，本文件不做任何旋转。
+
+export enum GaugeStage { idle, ping, download, upload, done }
+export enum ConnectionMode { multi, single }
+export enum ScaleMode { fixed, auto }
+export enum MotionMode { tween, spring }
+export enum GaugeTheme { dark, light }
+
+// 一条刻度文字的落点（uu 绝对坐标，锚点 = 文字视觉中心）
+export struct LabelSpec {
+    text: string,
+    x: float,
+    y: float,
+}
+
+// 彩弧的一段（uu 绝对坐标的 arcPath）
+export struct RingSegment {
+    commands: string,
+    color: color,
+}
+
+// 指针沿轴切出的一片梯形（局部坐标 0..170），平色。
+//
+// 为什么不是"一条 Path + 渐变画刷"：软件渲染器画 `Path.fill` 时只取
+// `Brush::color()`（`i-slint-renderer-software-1.18.1/lib.rs:3022-3030`），
+// 渐变画刷的 color() 是透明，整条指针会消失。切片平色在两个后端都正确。
+export struct NeedleSlice {
+    commands: string,
+    color: color,
+}
+
+export component SpeedGauge inherits Rectangle {
+    // ---------------------------------------------------------------
+    // 宿主可写的意图（控制器读它，动画由控制器算）
+    // ---------------------------------------------------------------
+    in-out property <float> speed-kbps: 0;
+    in-out property <GaugeStage> stage: GaugeStage.idle;
+    in-out property <GaugeTheme> theme: GaugeTheme.dark;
+    in-out property <ConnectionMode> connection-mode: ConnectionMode.multi;
+    in-out property <ScaleMode> scale-mode: ScaleMode.fixed;
+    in-out property <MotionMode> motion-mode: MotionMode.spring;
+    in-out property <bool> animation-enabled: true;
+    in-out property <bool> wobble-enabled: true;
+
+    // ---------------------------------------------------------------
+    // 视图态（由 GaugeHandle 每帧推进）
+    // ---------------------------------------------------------------
+    // 0 = 正上方，顺时针为正；含微颤，范围 [-137, 137]
+    in property <float> display-angle: -135;
+    in property <string> number-text: "0.00";
+    in property <int> lit-count: 0;
+    in property <int> ring-visible-count: 0;
+    in property <string> ring-boundary-commands: "";
+    in property <color> ring-boundary-color: #00000000;
+    in property <[RingSegment]> ring-segments: [];
+    in property <[LabelSpec]> labels: [];
+    in property <string> needle-commands: "";
+    in property <brush> needle-fill: #00000000;
+    // 指针整体光栅图（feature `needle-raster`）：GaugeHandle 每帧把整条指针（含真实渐变）
+    // 画进一张 RGBA，交给下面的 `Image` **一次**合成。非空时切片组与单 Path 全部隐藏。
+    //
+    // 为什么不是切片：逐路径 `over` 合成会让共享边像素被两片各覆盖一部分，接缝深度
+    // `−a²c(1−c)·255`（dark 21/255）/ `c(1−c)(P−C_i)`（light 46/255），与片数无关。
+    in property <image> needle-image;
+    // 指针切片（32 片）：GaugeHandle 每帧原地更新；`needle-image` 为空时才画。
+    in property <[NeedleSlice]> needle-slices: [];
+
+    // 主题 token（GaugeHandle 按 theme 推送；默认值 = 暗色主题）
+    in property <color> track-color: #26273b;
+    in property <color> label-on-color: #ffffff;
+    in property <color> label-off-color: #666666;
+    in property <color> number-color: #ffffff;
+    in property <color> unit-color: #666666;
+    // 实测校准值（不是源码 SRGB_FALLBACK 表里的 #00c9c0）：
+    // 参考截图里 Chromium 把 color(display-p3 0 0.773 0.749) 落到 sRGB 得到 (0,197,189)。
+    in property <color> accent-color: #00c5bd;
+
+    in property <string> number-font-family: "Gauge Mono";
+    in property <string> label-font-family: "Montserrat";
+
+    // 标定补偿位（默认值来自实测，见汇报第 3 节）：
+    // - number-dy = 0：数字 ink 中心已落在参考的 221.4（偏差 0.25 uu）
+    // - label-dy = -1.375：Slint 的行盒居中比 Chromium 的 dominant-baseline:central 低 1.375 uu
+    // - unit-row-dx = -1.25：图标墨迹从 x=3.5 起，纯盒居中整体偏右；再叠加本机字体比参考宽 1.25 uu
+    in property <float> number-dy: 0;
+    in property <float> label-dy: -1.375;
+    in property <float> unit-row-dx: -1.25;
+
+    // uu → 逻辑像素。组件被宿主拉伸到任意尺寸时，全部长度按此等比缩放。
+    property <float> k: root.width / 286px;
+
+    // 带描边的 Path 必须把元素盒放大一个 stroke：
+    // `Path::fitted_path_events()` 会把 viewBox 拟合进 `(元素尺寸 - stroke-width)`，
+    // 再整体偏移 `stroke-width/2`（`i-slint-core/items/path.rs`）。
+    // 于是 286 uu 的几何会被缩成 286-23 = 263/286 ≈ 0.9196（实测环半径 130 → 119.8）。
+    // 元素盒取 309 = 286 + 23、原点取 -11.5 之后缩放与偏移都抵消，透视回 1:1。
+    property <length> arc-inset: 11.5px * root.k;
+    property <length> arc-box: 309px * root.k;
+
+    background: root.theme == GaugeTheme.dark ? #000000 : #f2f2f2;
+
+    // ---------------------------------------------------------------
+    // 1. 轨道弧（arcPath(143,143,130,-135,135)，黄金串）
+    // ---------------------------------------------------------------
+    Path {
+        x: -root.arc-inset;
+        y: -root.arc-inset;
+        width: root.arc-box;
+        height: root.arc-box;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 286;
+        viewbox-height: 286;
+        commands: "M 51.076 234.924 A 130 130 0 1 1 234.924 234.924";
+        fill: transparent;
+        stroke: root.track-color;
+        stroke-width: 23px * root.k;
+        stroke-line-cap: butt;
+    }
+
+    // ---------------------------------------------------------------
+    // 2. 彩弧：前 k 段全画 + 第 k+1 段截到当前角（等价于原实现的扇形裁剪）
+    // ---------------------------------------------------------------
+    for seg[i] in root.ring-segments : Path {
+        x: -root.arc-inset;
+        y: -root.arc-inset;
+        width: root.arc-box;
+        height: root.arc-box;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 286;
+        viewbox-height: 286;
+        commands: seg.commands;
+        fill: transparent;
+        stroke: seg.color;
+        stroke-width: 23px * root.k;
+        stroke-line-cap: butt;
+        visible: i < root.ring-visible-count;
+    }
+
+    // 边界段：命令每帧重建，颜色 = 被截断那一段的采样色
+    Path {
+        x: -root.arc-inset;
+        y: -root.arc-inset;
+        width: root.arc-box;
+        height: root.arc-box;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 286;
+        viewbox-height: 286;
+        commands: root.ring-boundary-commands;
+        fill: transparent;
+        stroke: root.ring-boundary-color;
+        stroke-width: 23px * root.k;
+        stroke-line-cap: butt;
+        visible: root.ring-boundary-commands != "";
+    }
+
+    // ---------------------------------------------------------------
+    // 3. 指针：元素盒 = 以 (143,143) 为中心、边长 170 的正方形（uu 58..228）
+    //    viewbox 取 0..170 的**局部**坐标系，commands 由 Rust 烘焙（已减去 58）。
+    //
+    //    三条互斥的路径，优先级 raster > slices > 单 Path：
+    //    a) `needle-image`（feature `needle-raster`）：整条指针一张 RGBA，每像素只合成一次；
+    //    b) 32 片梯形平色（默认编译仍保留，关掉 feature 时走这条）；
+    //    c) 单 Path + 渐变画刷（只有宿主自己写 needle-commands/needle-fill 时才用）。
+    // ---------------------------------------------------------------
+    Image {
+        x: 58px * root.k;
+        y: 58px * root.k;
+        width: 170px * root.k;
+        height: 170px * root.k;
+        source: root.needle-image;
+        // 源图与元素盒同宽高比（正方形），`contain` 与 `fill` 在这里等价；显式写出来，
+        // 免得将来改了盒子比例就悄悄拉伸。
+        image-fit: contain;
+        visible: root.needle-image.width > 0;
+    }
+
+    for sl in root.needle-slices : Path {
+        x: 58px * root.k;
+        y: 58px * root.k;
+        width: 170px * root.k;
+        height: 170px * root.k;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 170;
+        viewbox-height: 170;
+        commands: sl.commands;
+        fill: sl.color;
+        visible: root.needle-image.width == 0;
+    }
+
+    // 单 Path 回退：只有宿主自己用 needle-commands / needle-fill 时才画。
+    Path {
+        x: 58px * root.k;
+        y: 58px * root.k;
+        width: 170px * root.k;
+        height: 170px * root.k;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 170;
+        viewbox-height: 170;
+        commands: root.needle-commands;
+        fill: root.needle-fill;
+        visible: root.needle-slices.length == 0 && root.needle-image.width == 0;
+    }
+
+    // ---------------------------------------------------------------
+    // 4. 刻度文字：固定盒 90×20 uu，中心落在 (lb.x, lb.y + label-dy)
+    // ---------------------------------------------------------------
+    for lb[i] in root.labels : Rectangle {
+        x: (lb.x - 45) * root.k * 1px;
+        y: (lb.y + root.label-dy - 10) * root.k * 1px;
+        width: 90px * root.k;
+        height: 20px * root.k;
+        background: transparent;
+
+        Text {
+            width: 100%;
+            height: 100%;
+            text: lb.text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-size: 14px * root.k;
+            font-weight: 700;
+            font-family: root.label-font-family;
+            color: i < root.lit-count ? root.label-on-color : root.label-off-color;
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // 5. 中央数字：固定盒 240×40 uu，中心 (143, 226 + number-dy)
+    // ---------------------------------------------------------------
+    Rectangle {
+        x: (143 - 120) * root.k * 1px;
+        y: (226 + root.number-dy - 20) * root.k * 1px;
+        width: 240px * root.k;
+        height: 40px * root.k;
+        background: transparent;
+
+        Text {
+            width: 100%;
+            height: 100%;
+            text: root.number-text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-size: 36px * root.k;
+            font-weight: 400;
+            font-family: root.number-font-family;
+            color: root.number-color;
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // 6. 单位行：286 宽容器 + 居中 HorizontalLayout（icon 16 + gap 4 + "Mbps" 14）
+    //    unit-row-dx 是"墨迹居中"补偿：图标墨迹从 x=3.5 起，纯盒居中会整体偏右。
+    // ---------------------------------------------------------------
+    Rectangle {
+        x: root.unit-row-dx * root.k * 1px;
+        y: (260 - 10) * root.k * 1px;
+        width: 286px * root.k;
+        height: 20px * root.k;
+        background: transparent;
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: 4px * root.k;
+            cross-axis-alignment: center;
+
+            // 图标盒：16×16 uu，容器居中 ⇒ 盒顶 = 260 - 8 = 252，等价于源码的
+            // `translate(0,-8)`（源码把 16 高的图标框从 260 上移到 252）。
+            Rectangle {
+                preferred-width: 16px * root.k;
+                preferred-height: 16px * root.k;
+                background: transparent;
+
+                // 下载箭头（源码原样 path）
+                Path {
+                    x: 0;
+                    y: 0;
+                    width: 16px * root.k;
+                    height: 16px * root.k;
+                    viewbox-x: 0;
+                    viewbox-y: 0;
+                    viewbox-width: 16;
+                    viewbox-height: 16;
+                    commands: "M6.6 0.6h2.8v6.2h3.1L8 12.4 3.5 6.8h3.1z";
+                    fill: root.accent-color;
+                    visible: root.stage != GaugeStage.upload;
+                }
+
+                // 上传箭头（源码原样 path）
+                Path {
+                    x: 0;
+                    y: 0;
+                    width: 16px * root.k;
+                    height: 16px * root.k;
+                    viewbox-x: 0;
+                    viewbox-y: 0;
+                    viewbox-width: 16;
+                    viewbox-height: 16;
+                    commands: "M6.6 15.4h2.8V9.2h3.1L8 3.6 3.5 9.2h3.1z";
+                    fill: root.accent-color;
+                    visible: root.stage == GaugeStage.upload;
+                }
+            }
+
+            Text {
+                text: "Mbps";
+                color: root.unit-color;
+                font-size: 14px * root.k;
+                font-family: root.label-font-family;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
