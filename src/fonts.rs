@@ -130,8 +130,36 @@ mod tests {
         );
     }
 
+    /// 有没有可用的窗口系统。
+    ///
+    /// `fontique::shared_collection()` 会**反向触发** Slint 平台初始化：在有默认后端
+    /// （winit）的情况下，无显示器的 Linux 会直接报
+    /// `neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set`。
+    fn display_available() -> bool {
+        if !cfg!(target_os = "linux") {
+            return true;
+        }
+        std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()
+    }
+
     #[test]
     fn registering_is_idempotent() {
+        // 无显示器时先装软件渲染平台（开了 `screenshots` feature 才有），
+        // 装不上就跳过——这条测试验的是"幂等"，不是"有没有窗口系统"。
+        #[cfg(feature = "screenshots")]
+        let slot = if display_available() {
+            None
+        } else {
+            crate::shots::install().ok()
+        };
+        #[cfg(not(feature = "screenshots"))]
+        let slot: Option<()> = None;
+
+        if slot.is_none() && !display_available() {
+            eprintln!("SKIP: 无显示器且装不上软件渲染平台，字体注册需要平台先初始化");
+            return;
+        }
+
         let a = register_bundled_fonts();
         let b = register_bundled_fonts();
         assert_eq!(a, b);

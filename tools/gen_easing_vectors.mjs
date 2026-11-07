@@ -72,9 +72,16 @@ function lit(v) {
   return s;
 }
 
+/**
+ * 生成 rustfmt 稳定的一行一个元素格式。
+ *
+ * 早先这里把所有元素塞在**同一行**，结果 `cargo fmt` 会把它重排成一行一个——于是
+ * `--check` 的文本比较永远不可能通过。现在生成的就是 rustfmt 的输出形态（竖排 + 尾逗号），
+ * 并且 `--check` 改成**按数值比较**（见下），双重保险。
+ */
 function rustArray(name, values) {
-  const body = values.map(lit).join(', ');
-  return `const ${name}: [f64; ${N}] = [${body}];`;
+  const body = values.map((v) => `    ${lit(v)},`).join('\n');
+  return `const ${name}: [f64; ${N}] = [\n${body}\n];`;
 }
 
 const ts = Array.from({ length: N }, (_, i) => i / (N - 1));
@@ -111,13 +118,55 @@ if (from < 0 || to < 0 || to < from) {
 }
 const next = source.slice(0, from) + block + source.slice(to + END.length);
 
+/**
+ * 按**数值**校验，而不是按文本校验。
+ *
+ * 生成块会被 `cargo fmt` 重新排版（缩进、换行、尾逗号），rustfmt 的版次之间也可能有差异；
+ * 文本比较会让"数值完全正确但排版变了"这种情况误报。这里把文件里的三个数组抽出来解析成
+ * f64 再逐点比对，容差 1e-12（`lit()` 用最短往返表示，实测误差通常是 0）。
+ */
+function arrayOf(fileSource, name) {
+  const re = new RegExp(`const ${name}: \\[f64; ${N}\\] = \\[([\\s\\S]*?)\\];`);
+  const m = fileSource.match(re);
+  if (!m) return null;
+  return (m[1].match(/-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g) || []).map(Number);
+}
+
 const check = process.argv.includes('--check');
 if (check) {
-  if (next !== source) {
-    console.error('MISMATCH: tests/animation.rs 的向量块与生成结果不一致');
+  const problems = [];
+  const nMatch = source.match(/const EASING_N: usize = (\d+);/);
+  if (!nMatch || Number(nMatch[1]) !== N) {
+    problems.push(`EASING_N = ${nMatch ? nMatch[1] : '(缺失)'}，期望 ${N}`);
+  }
+  for (const [name, expected] of [
+    ['EASING_T', ts],
+    ['EASING_OUT', out],
+    ['EASING_IN_OUT', inout],
+  ]) {
+    const got = arrayOf(source, name);
+    if (!got) {
+      problems.push(`${name}: 在 tests/animation.rs 里找不到 \`const ${name}: [f64; ${N}]\``);
+      continue;
+    }
+    if (got.length !== expected.length) {
+      problems.push(`${name}: ${got.length} 个元素，期望 ${N} 个`);
+      continue;
+    }
+    for (let i = 0; i < expected.length; i++) {
+      if (!(Math.abs(got[i] - expected[i]) <= 1e-12)) {
+        problems.push(`${name}[${i}]: 文件里是 ${got[i]}，脚本算出 ${expected[i]}`);
+        break;
+      }
+    }
+  }
+  if (problems.length) {
+    console.error('MISMATCH: tests/animation.rs 的向量与脚本算出的一致吗？不一致：');
+    for (const p of problems) console.error('  - ' + p);
+    console.error('提示：跑 `node tools/gen_easing_vectors.mjs` 重新生成后再 `cargo fmt`。');
     process.exit(1);
   }
-  console.log(`OK: ${N} 点 x 2 条曲线向量一致 (EASE_OUT/EASE_IN_OUT)`);
+  console.log(`OK: ${N} 点 x 2 条曲线，数值逐点一致 (EASE_OUT/EASE_IN_OUT，容差 1e-12)`);
   process.exit(0);
 }
 
