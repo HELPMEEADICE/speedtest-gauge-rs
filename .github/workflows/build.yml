@@ -1,12 +1,20 @@
 name: build
 
-# 构建 7 个目标的 demo 可执行文件，打包成 tar.gz（内含二进制 + LICENSE + NOTICE + 运行说明）。
+# 构建 7 个目标的 demo 可执行文件，打包成 tar.gz（二进制 + LICENSE + NOTICE + 运行说明）。
 #   - workflow_dispatch：产物作为 Actions artifact 可直接下载；可选把产物也挂到某个 Release
 #   - release(published)：自动把产物上传到该 Release
 #
+# 七个目标全部跑**原生** runner，没有一处交叉编译（因此也不需要交叉链接器/multiarch）：
+#   windows-x86_64   windows-latest        x64
+#   windows-aarch64  windows-11-arm        arm64
+#   macos-x86_64     macos-15-intel        Intel
+#   macos-aarch64    macos-latest          Apple Silicon
+#   linux-x86_64     ubuntu-latest         x64
+#   linux-aarch64    ubuntu-24.04-arm      arm64
+#   linux-riscv64    ubuntu-24.04-riscv    RISC-V（RISE 提供的原生硬件，见下）
+#
 # 优化只在这里生效（CARGO_PROFILE_RELEASE_* 环境变量注入），仓库里的 Cargo.toml 保持默认
 # profile——这样 docs/performance.md 记录的体积数字仍然可复现。
-#
 # 实测（本机 x86_64 Windows，同样的 8 个变量）：demo.exe 28.68 MiB → 8.92 MiB，构建 70 s。
 
 on:
@@ -15,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: '只构建名字包含该子串的目标（如 linux / aarch64 / windows），留空 = 全部 7 个'
+        description: '只构建名字包含该子串的目标（如 linux / aarch64 / windows），留空 = 全部'
         required: false
         default: ''
       upload_to_release:
@@ -38,8 +46,7 @@ env:
   CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "false"
 
 jobs:
-  # 目标清单动态生成：手动触发时可以用 only 输入只跑一部分（矩阵不支持逐项跳过，
-  # 所以在这里就把矩阵裁剪好，而不是在每个 step 上写 if）
+  # 目标清单动态生成：手动触发时可以用 only 只跑一部分；riscv 需要有 RISE runner 才排进去
   setup:
     name: 生成目标矩阵
     runs-on: ubuntu-latest
@@ -50,20 +57,28 @@ jobs:
         shell: bash
         env:
           ONLY: ${{ inputs.only }}
+          RISCV: ${{ vars.RISCV_RUNNERS }}
         run: |
           set -euo pipefail
           ALL='[
-            {"name":"windows-x86_64","os":"windows-latest","target":"x86_64-pc-windows-msvc","apt":"","linker_env":"","linker":"","rustflags_env":"","debarch":"","debtriple":""},
-            {"name":"windows-aarch64","os":"windows-latest","target":"aarch64-pc-windows-msvc","apt":"","linker_env":"","linker":"","rustflags_env":"","debarch":"","debtriple":""},
-            {"name":"macos-x86_64","os":"macos-latest","target":"x86_64-apple-darwin","apt":"","linker_env":"","linker":"","rustflags_env":"","debarch":"","debtriple":""},
-            {"name":"macos-aarch64","os":"macos-latest","target":"aarch64-apple-darwin","apt":"","linker_env":"","linker":"","rustflags_env":"","debarch":"","debtriple":""},
-            {"name":"linux-x86_64","os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu","apt":"","linker_env":"","linker":"","rustflags_env":"","debarch":"","debtriple":""},
-            {"name":"linux-aarch64","os":"ubuntu-latest","target":"aarch64-unknown-linux-gnu","apt":"gcc-aarch64-linux-gnu","linker_env":"CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER","linker":"aarch64-linux-gnu-gcc","rustflags_env":"CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS","debarch":"arm64","debtriple":"aarch64-linux-gnu"},
-            {"name":"linux-riscv64","os":"ubuntu-latest","target":"riscv64gc-unknown-linux-gnu","apt":"gcc-riscv64-linux-gnu","linker_env":"CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER","linker":"riscv64-linux-gnu-gcc","rustflags_env":"CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_RUSTFLAGS","debarch":"riscv64","debtriple":"riscv64-linux-gnu"}
+            {"name":"windows-x86_64","os":"windows-latest","target":"x86_64-pc-windows-msvc"},
+            {"name":"windows-aarch64","os":"windows-11-arm","target":"aarch64-pc-windows-msvc"},
+            {"name":"macos-x86_64","os":"macos-15-intel","target":"x86_64-apple-darwin"},
+            {"name":"macos-aarch64","os":"macos-latest","target":"aarch64-apple-darwin"},
+            {"name":"linux-x86_64","os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu"},
+            {"name":"linux-aarch64","os":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu"},
+            {"name":"linux-riscv64","os":"ubuntu-24.04-riscv","target":"riscv64gc-unknown-linux-gnu"}
           ]'
-          # jq -c 保证输出是**单行**：$GITHUB_OUTPUT 的 key=value 形式不接受多行值
-          SELECTED=$(printf '%s' "$ALL" | jq -c --arg f "${ONLY:-}" \
-            '[.[] | select($f == "" or (.name | contains($f)))]')
+          # RISC-V 的原生 runner 由 RISE 提供（github.com/apps/rise-risc-v-runners-personal）：
+          # 没装那个 GitHub App 时 `ubuntu-24.04-riscv` 这个 label 会一直排队，所以用仓库变量
+          # RISCV_RUNNERS=true 显式开启；没开启时这一项被剔掉并在日志里留下一行 notice。
+          if [ "${RISCV:-}" != "true" ]; then
+            echo "::notice::跳过 linux-riscv64：需要安装 RISE RISC-V Runners App，并把仓库变量 RISCV_RUNNERS 设为 true"
+          fi
+          SELECTED=$(printf '%s' "$ALL" | jq -c --arg f "${ONLY:-}" --arg riscv "${RISCV:-}" '
+            [ .[]
+              | select($f == "" or (.name | contains($f)))
+              | select(.name != "linux-riscv64" or $riscv == "true") ]')
           COUNT=$(printf '%s' "$SELECTED" | jq 'length')
           if [ "$COUNT" = "0" ]; then echo "only='${ONLY:-}' 没有匹配任何目标"; exit 1; fi
           echo "选中 $COUNT 个目标：$(printf '%s' "$SELECTED" | jq -r '.[].name' | tr '\n' ' ')"
@@ -91,39 +106,12 @@ jobs:
           key: ${{ matrix.target }}
 
       # Slint 的字体栈在 Linux 上会**链接**系统 fontconfig（yeslogic-fontconfig-sys）。
-      # 原生构建装 amd64 开发包即可；交叉构建还必须为目标架构准备 libfontconfig.so，
-      # 否则链接阶段找不到符号。这就是下面 multiarch 那步存在的唯一原因。
-      - name: Linux 构建依赖（fontconfig）
+      # 因为是原生 runner，直接装本机 amd64/arm64/riscv64 的开发包即可，不涉及 multiarch。
+      - name: Linux 构建依赖
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config libfontconfig1-dev
-
-      - name: 交叉工具链 + 目标架构 fontconfig（multiarch）
-        if: matrix.apt != ''
-        run: |
-          set -euo pipefail
-          sudo dpkg --add-architecture ${{ matrix.debarch }}
-          # Ubuntu 24.04 的源是 deb822 格式：先把官方源限定到 amd64，
-          # 再单独加一条 ports 源给目标架构（arm64 / riscv64 只在 ports 里）。
-          sudo sed -i 's/^Types: deb$/Types: deb\nArchitectures: amd64/' /etc/apt/sources.list.d/ubuntu.sources
-          sudo tee /etc/apt/sources.list.d/ports.sources >/dev/null <<EOF
-          Types: deb
-          URIs: http://ports.ubuntu.com/ubuntu-ports
-          Suites: noble noble-updates
-          Components: main universe
-          Architectures: ${{ matrix.debarch }}
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-          EOF
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            ${{ matrix.apt }} libfontconfig1-dev:${{ matrix.debarch }}
-          {
-            echo "PKG_CONFIG_ALLOW_CROSS=1"
-            echo "PKG_CONFIG_PATH=/usr/lib/${{ matrix.debtriple }}/pkgconfig"
-            echo "${{ matrix.linker_env }}=${{ matrix.linker }}"
-            echo "${{ matrix.rustflags_env }}=-L/usr/lib/${{ matrix.debtriple }}"
-          } >> "$GITHUB_ENV"
 
       - name: Build demo（优化 release profile；变量已在 job 级注入）
         run: cargo build --release --target ${{ matrix.target }} --example demo
@@ -147,6 +135,7 @@ jobs:
           echo "--- 产物 ---"
           ls -l dist
           echo "二进制：$(du -h "dist/stage/$EXE" | cut -f1)  压缩包：$(du -h "dist/$NAME.tar.gz" | cut -f1)"
+          echo "架构：$(file "dist/stage/$EXE" 2>/dev/null || echo '(file 不可用)')"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
