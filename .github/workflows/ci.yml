@@ -1,0 +1,109 @@
+name: ci
+
+# 语法检查 / 代码检查 / 测试。
+# 视觉回归（tests/visual.rs）在干净 clone 上会显式跳过两条依赖 Gauge Mono 的字形度量断言
+# （那是 Ookla 专有字体，不随仓库分发），其余断言照常执行。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (rustfmt + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Slint 在 Linux 上要链接 fontconfig / freetype / xkbcommon / GL 相关库；
+      # 这里的构建只做检查，不跑窗口，但 pkg-config 阶段需要这些 -dev 包。
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libfontconfig1-dev libfreetype-dev \
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (warnings = errors)
+        run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    name: cargo test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libfontconfig1-dev libfreetype-dev \
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev
+
+      # 单元测试 + 视觉回归（软件渲染器，无需显示器）
+      - name: Test
+        run: cargo test --all-targets
+
+  generated:
+    name: 生成物与脚本语法
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # 渐变数据与缓动黄金向量都是脚本生成的：确认仓库里的文件与脚本输出一致，
+      # 防止有人手改了生成文件却忘了改脚本（或反过来）。
+      - name: src/gradient_data.rs 与脚本一致
+        run: python tools/gen_gradient_data.py --check
+
+      - name: tests/animation.rs 黄金向量与脚本一致
+        run: node tools/gen_easing_vectors.mjs --check
+
+      - name: Python 脚本语法
+        run: python -m compileall -q tools
+
+      - name: Node 脚本语法
+        run: |
+          for f in tools/*.mjs; do node --check "$f"; done
+
+      # 对拍工具依赖 Pillow / numpy，只做语法与导入检查，不跑图像对比
+      - name: 对拍脚本可导入
+        run: |
+          python -m pip install --quiet pillow numpy
+          python -c "import sys; sys.path.insert(0, 'tools'); import measure_reference, compare_report"

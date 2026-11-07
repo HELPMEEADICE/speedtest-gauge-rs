@@ -1,0 +1,145 @@
+name: build
+
+# 构建 7 个目标的 demo 可执行文件，打包成 tar.gz（内含二进制 + LICENSE + NOTICE + 运行说明）。
+#   - workflow_dispatch：产物作为 Actions artifact 可直接下载；可选把产物也挂到某个 Release
+#   - release(published)：自动把产物上传到该 Release
+#
+# 优化只在这里生效（CARGO_PROFILE_RELEASE_* 环境变量注入），仓库里的 Cargo.toml 保持默认
+# profile——这样 docs/performance.md 记录的体积数字仍然可复现。
+#
+# 实测（本机 x86_64 Windows，同样的 8 个变量）：demo.exe 28.68 MiB → 8.92 MiB，构建 70 s。
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      only:
+        description: '只构建名字包含该子串的目标（如 linux / aarch64 / windows），留空 = 全部 7 个'
+        required: false
+        default: ''
+      upload_to_release:
+        description: '构建后把产物挂到这个 tag 的 Release（留空 = 只上传 Actions artifact）'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  # ↓↓↓ 仅 CI 使用的体积优化 profile ↓↓↓
+  CARGO_PROFILE_RELEASE_OPT_LEVEL: "z"
+  CARGO_PROFILE_RELEASE_LTO: "fat"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+  CARGO_PROFILE_RELEASE_PANIC: "abort"
+  CARGO_PROFILE_RELEASE_STRIP: "debuginfo"
+  CARGO_PROFILE_RELEASE_DEBUG: "false"
+  CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+  CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "false"
+
+jobs:
+  # 目标清单动态生成：手动触发时可以用 only 输入只跑一部分（矩阵不支持逐项跳过，
+  # 所以在这里就把矩阵裁剪好，而不是在每个 step 上写 if）
+  setup:
+    name: 生成目标矩阵
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - id: gen
+        shell: bash
+        env:
+          ONLY: ${{ inputs.only }}
+        run: |
+          set -euo pipefail
+          ALL='[
+            {"name":"windows-x86_64","os":"windows-latest","target":"x86_64-pc-windows-msvc","apt":"","linker_env":"","linker":""},
+            {"name":"windows-aarch64","os":"windows-latest","target":"aarch64-pc-windows-msvc","apt":"","linker_env":"","linker":""},
+            {"name":"macos-x86_64","os":"macos-latest","target":"x86_64-apple-darwin","apt":"","linker_env":"","linker":""},
+            {"name":"macos-aarch64","os":"macos-latest","target":"aarch64-apple-darwin","apt":"","linker_env":"","linker":""},
+            {"name":"linux-x86_64","os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu","apt":"","linker_env":"","linker":""},
+            {"name":"linux-aarch64","os":"ubuntu-latest","target":"aarch64-unknown-linux-gnu","apt":"gcc-aarch64-linux-gnu","linker_env":"CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER","linker":"aarch64-linux-gnu-gcc"},
+            {"name":"linux-riscv64","os":"ubuntu-latest","target":"riscv64gc-unknown-linux-gnu","apt":"gcc-riscv64-linux-gnu","linker_env":"CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER","linker":"riscv64-linux-gnu-gcc"}
+          ]'
+          if [ -z "${ONLY:-}" ]; then
+            SELECTED="$ALL"
+          else
+            SELECTED=$(printf '%s' "$ALL" | jq -c --arg f "$ONLY" '[.[] | select(.name | contains($f))]')
+          fi
+          COUNT=$(printf '%s' "$SELECTED" | jq 'length')
+          if [ "$COUNT" = "0" ]; then echo "only='$ONLY' 没有匹配任何目标"; exit 1; fi
+          echo "选中 $COUNT 个目标：$(printf '%s' "$SELECTED" | jq -r '.[].name' | tr '\n' ' ')"
+          echo "matrix={\"include\":$SELECTED}" >> "$GITHUB_OUTPUT"
+
+  demo:
+    name: ${{ matrix.name }}
+    needs: setup
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust + target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: 交叉编译工具链
+        if: matrix.apt != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config ${{ matrix.apt }}
+          echo "${{ matrix.linker_env }}=${{ matrix.linker }}" >> "$GITHUB_ENV"
+
+      - name: Build demo（优化 release profile；变量已在 job 级注入）
+        run: cargo build --release --target ${{ matrix.target }} --example demo
+
+      - name: 打包
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME="speedtest-gauge-demo-${{ matrix.name }}"
+          EXE=demo
+          if [ "${{ runner.os }}" = "Windows" ]; then EXE=demo.exe; fi
+          BIN="target/${{ matrix.target }}/release/examples/$EXE"
+          test -f "$BIN" || { echo "missing binary: $BIN"; ls -R "target/${{ matrix.target }}/release/examples" || true; exit 1; }
+
+          rm -rf dist && mkdir -p dist/stage
+          cp "$BIN" "dist/stage/$EXE"
+          cp LICENSE NOTICE.md packaging/README-demo.txt dist/stage/
+          tar -czf "dist/$NAME.tar.gz" -C dist/stage .
+          ( cd dist && sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256" )
+
+          echo "--- 产物 ---"
+          ls -l dist
+          echo "二进制：$(du -h "dist/stage/$EXE" | cut -f1)  压缩包：$(du -h "dist/$NAME.tar.gz" | cut -f1)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: speedtest-gauge-demo-${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 附加到 Release
+        if: github.event_name == 'release' || inputs.upload_to_release != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name || inputs.upload_to_release }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "上传到 Release tag: $TAG"
+          gh release upload "$TAG" dist/*.tar.gz dist/*.sha256 \
+            --repo "${{ github.repository }}" --clobber

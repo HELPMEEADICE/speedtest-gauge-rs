@@ -448,7 +448,11 @@ fn label_box(value_index: usize) -> (f64, f64, f64, f64) {
     let rad = (angle - 90.0).to_radians();
     let lx = 143.0 + LABEL_RADIUS * rad.cos();
     let ly = 143.0 + LABEL_RADIUS * rad.sin();
-    (lx - 18.0, ly - 10.0, lx + 18.0, ly + 10.0)
+    // ±13×±8 而不是 ±18×±10：`1000` 的框（x 198.6…224.6）必须避开中央数字的墨迹右缘。
+    // 用 Gauge Mono 时数字右缘约 179 uu，宽松的框也没问题；但缺这个专有字体时数字回退到
+    // 系统等宽、宽度 +42.6%，墨迹右缘会顶到 ≈194 uu，正好插进 ±18 的框里造成假"点亮"。
+    // 收紧后既不丢刻度自身的墨迹（`1000` 墨迹宽 33 uu，±13 覆盖中间 78%），也不再受数字影响。
+    (lx - 13.0, ly - 8.0, lx + 13.0, ly + 8.0)
 }
 
 /// 数一下框里有多少个**精确等于** `color` 的像素。
@@ -591,9 +595,37 @@ fn ring_band_covers_documented_radii() {
 
 // ---------------------------------------------------------------- 断言 3：数字 ink bbox
 
+/// 中央数字的度量是用 `Gauge Mono` 标定的，而它是 Ookla 的专有字体、**不随仓库分发**
+/// （见 `NOTICE.md` §3.2）。缺它时 Slint 会回退到系统等宽字体，墨迹宽度约 +42.6%，
+/// 于是下面这两条按字体度量写死的断言在 CI（干净 clone）上必然失败——那不代表实现坏了。
+/// 所以这里显式跳过并打印原因，而不是把容差放宽到失去意义。
+///
+/// ⚠️ 只能在 `artifacts()` **之后**调用：字体注册必须在 `shots::install()` 装好平台之后
+/// 进行（`fontique` 的 shared_collection 会反向触发平台初始化），否则 `OnceLock` 会把
+/// "平台还没装时注册失败"的坏结果缓存住，连带所有字体相关断言一起挂。
+fn gauge_mono_available() -> bool {
+    speed_gauge_slint::fonts::register_bundled_fonts()
+        .sources
+        .iter()
+        .any(|s| s.contains("gaugemono"))
+}
+
+macro_rules! skip_without_gauge_mono {
+    () => {
+        if !gauge_mono_available() {
+            eprintln!(
+                "SKIP: 未找到 .local-fonts/gaugemono.ttf（Ookla 专有字体不随仓库分发），\
+                 数字字形度量断言跳过。要跑这两条请把该字体放到 crate 根目录的 .local-fonts/ 下。"
+            );
+            return;
+        }
+    };
+}
+
 #[test]
 fn number_ink_bbox_matches_documented_table() {
     let art = artifacts();
+    skip_without_gauge_mono!();
     for case in &CASES {
         let frame = art.state(case.name);
         assert_eq!(
@@ -729,6 +761,7 @@ fn high_and_done_render_identically() {
 #[test]
 fn number_ink_centre_is_size_invariant() {
     let art = artifacts();
+    skip_without_gauge_mono!();
     let mut centres = Vec::with_capacity(art.sizes.len());
     for (logical, frame) in &art.sizes {
         let (cx, cy) = ink_centroid_uu(frame, NUMBER_BOX);
